@@ -183,7 +183,7 @@ private:
 		avcodec_free_context(&decoder);
 		const AVCodec *codec = avcodec_find_decoder(codec_id);
 		if (!codec) {
-			obs_log(LOG_ERROR, "[HEVC FLV] Decoder is unavailable");
+			blog(LOG_ERROR, "[HEVC FLV] Decoder is unavailable");
 			return false;
 		}
 
@@ -202,7 +202,7 @@ private:
 
 		const int result = avcodec_open2(decoder, codec, nullptr);
 		if (result < 0) {
-			obs_log(LOG_ERROR, "[HEVC FLV] Cannot open decoder: %s", ffmpeg_error(result).c_str());
+			blog(LOG_ERROR, "[HEVC FLV] Cannot open decoder: %s", ffmpeg_error(result).c_str());
 			avcodec_free_context(&decoder);
 			return false;
 		}
@@ -212,12 +212,12 @@ private:
 	void initialize_video(const uint8_t *config, size_t config_size)
 	{
 		if (config_size < 23 || config[0] != 1) {
-			obs_log(LOG_WARNING, "[HEVC FLV] Invalid HEVC configuration record");
+			blog(LOG_WARNING, "[HEVC FLV] Invalid HEVC configuration record");
 			return;
 		}
 		free_video_decoder();
 		if (open_decoder(video_decoder_, AV_CODEC_ID_HEVC, config, config_size))
-			obs_log(LOG_INFO, "[HEVC FLV] HEVC video decoder initialized");
+			blog(LOG_INFO, "[HEVC FLV] HEVC video decoder initialized");
 	}
 
 	void free_video_decoder()
@@ -233,13 +233,13 @@ private:
 	void initialize_audio(const uint8_t *config, size_t config_size)
 	{
 		if (config_size < 2) {
-			obs_log(LOG_WARNING, "[HEVC FLV] Invalid AAC configuration record");
+			blog(LOG_WARNING, "[HEVC FLV] Invalid AAC configuration record");
 			return;
 		}
 		avcodec_free_context(&audio_decoder_);
 		swr_free(&resampler_);
 		if (open_decoder(audio_decoder_, AV_CODEC_ID_AAC, config, config_size))
-			obs_log(LOG_INFO, "[HEVC FLV] AAC audio decoder initialized");
+			blog(LOG_INFO, "[HEVC FLV] AAC audio decoder initialized");
 	}
 
 	void output_video(AVFrame *frame)
@@ -282,7 +282,7 @@ private:
 								      &audio_decoder_->ch_layout, audio_decoder_->sample_fmt,
 								      audio_decoder_->sample_rate, 0, nullptr);
 			if (result < 0 || !resampler_ || swr_init(resampler_) < 0) {
-				obs_log(LOG_ERROR, "[HEVC FLV] Cannot initialize audio resampler");
+				blog(LOG_ERROR, "[HEVC FLV] Cannot initialize audio resampler");
 				swr_free(&resampler_);
 				return;
 			}
@@ -380,7 +380,7 @@ private:
 	{
 		if (!header_parsed && buffer.size() >= 13) {
 			if (std::memcmp(buffer.data(), "FLV", 3) != 0) {
-				obs_log(LOG_ERROR, "[HEVC FLV] Upstream response is not FLV");
+				blog(LOG_ERROR, "[HEVC FLV] Upstream response is not FLV");
 				stop_requested_ = true;
 				return;
 			}
@@ -412,14 +412,14 @@ private:
 #if defined(_WIN32)
 		const std::wstring wide_url = utf8_to_wide(url);
 		if (wide_url.empty()) {
-			obs_log(LOG_ERROR, "[HEVC FLV] URL must be valid UTF-8");
+			blog(LOG_ERROR, "[HEVC FLV] URL must be valid UTF-8");
 			return false;
 		}
 
 		URL_COMPONENTS components{};
 		components.dwStructSize = sizeof(components);
 		if (!WinHttpCrackUrl(wide_url.c_str(), 0, 0, &components)) {
-			obs_log(LOG_ERROR, "[HEVC FLV] Invalid URL");
+			blog(LOG_ERROR, "[HEVC FLV] Invalid URL");
 			return false;
 		}
 		const std::wstring host(components.lpszHostName, components.dwHostNameLength);
@@ -452,7 +452,7 @@ private:
 		WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &status,
 						    &status_size, nullptr);
 		if (status != 200) {
-			obs_log(LOG_WARNING, "[HEVC FLV] Upstream returned HTTP %lu", status);
+			blog(LOG_WARNING, "[HEVC FLV] Upstream returned HTTP %lu", status);
 			WinHttpCloseHandle(request);
 			WinHttpCloseHandle(connection);
 			WinHttpCloseHandle(session);
@@ -480,7 +480,7 @@ private:
 		CFURLRef stream_url = CFURLCreateWithBytes(kCFAllocatorDefault, reinterpret_cast<const UInt8 *>(url.data()),
 								   CFIndex(url.size()), kCFStringEncodingUTF8, nullptr);
 		if (!stream_url) {
-			obs_log(LOG_ERROR, "[HEVC FLV] URL must be valid UTF-8");
+			blog(LOG_ERROR, "[HEVC FLV] URL must be valid UTF-8");
 			return false;
 		}
 		CFHTTPMessageRef request = CFHTTPMessageCreateRequest(kCFAllocatorDefault, CFSTR("GET"), stream_url,
@@ -513,7 +513,7 @@ private:
 					const CFIndex status = CFHTTPMessageGetResponseStatusCode(response);
 					CFRelease(response);
 					if (status != 200) {
-						obs_log(LOG_WARNING, "[HEVC FLV] Upstream returned HTTP %ld", long(status));
+						blog(LOG_WARNING, "[HEVC FLV] Upstream returned HTTP %ld", long(status));
 						break;
 					}
 					checked_status = true;
@@ -543,16 +543,16 @@ private:
 
 	void run(const std::string url)
 	{
-		obs_log(LOG_INFO, "[HEVC FLV] Starting source");
+		blog(LOG_INFO, "[HEVC FLV] Starting source");
 		while (!stop_requested_) {
 			free_decoders();
 			stream_once(url);
 			if (!stop_requested_)
-				obs_log(LOG_INFO, "[HEVC FLV] Connection closed; reconnecting");
+				blog(LOG_INFO, "[HEVC FLV] Connection closed; reconnecting");
 			if (!wait_for_reconnect())
 				break;
 		}
-		obs_log(LOG_INFO, "[HEVC FLV] Source stopped");
+		blog(LOG_INFO, "[HEVC FLV] Source stopped");
 	}
 };
 
@@ -610,11 +610,11 @@ obs_source_info source_info = {
 bool obs_module_load()
 {
 	obs_register_source(&source_info);
-	obs_log(LOG_INFO, "[HEVC FLV] Windows HEVC-FLV source loaded");
+	blog(LOG_INFO, "[HEVC FLV] HEVC-FLV source loaded");
 	return true;
 }
 
 void obs_module_unload()
 {
-	obs_log(LOG_INFO, "[HEVC FLV] Windows HEVC-FLV source unloaded");
+	blog(LOG_INFO, "[HEVC FLV] HEVC-FLV source unloaded");
 }
