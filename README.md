@@ -1,61 +1,57 @@
 # OBS HEVC-FLV Source
 
-**English** | [简体中文](README.zh-CN.md)
+**简体中文** | [English](README.en.md)
 
-This is a native Windows and macOS OBS input-source plugin for HTTP-FLV streams
-whose video tag is HEVC/H.265 (`CodecID = 12`). It bypasses the incompatibility
-that causes OBS's ordinary Media Source to play AAC audio while showing a black
-video frame.
+这是一个原生 Windows 和 macOS OBS 输入源插件，面向视频标签为
+HEVC/H.265（`CodecID = 12`）的 HTTP-FLV 流。它解决了 OBS 普通“媒体源”
+只能播放 AAC 音频、视频画面黑屏的问题。
 
-## What it does
+## 功能
 
-- Pulls `http://` and `https://` FLV URLs with WinHTTP on Windows and the
-  system CFNetwork HTTP stream on macOS.
-- Parses FLV tags itself, including HEVC sequence headers (`hvcC`) and AAC
-  sequence headers.
-- Uses the FFmpeg libraries supplied with an OBS SDK/build to decode HEVC/AAC.
-- Converts decoded video to BGRA and sends raw video/audio frames to OBS.
-- Reconnects after the configured delay when the source closes or fails.
+- Windows 使用 WinHTTP、macOS 使用系统 CFNetwork 拉取 `http://` 和
+  `https://` FLV 地址。
+- 自行解析 FLV 标签，包括 HEVC 序列头（`hvcC`）和 AAC 序列头。
+- 使用 OBS SDK/构建环境提供的 FFmpeg 解码 HEVC/AAC。
+- 将视频转换为 BGRA，并把原始音视频帧输出到 OBS。
+- 源站断开或失败时，按配置的延迟自动重连。
 
-It is intentionally a source plugin: add it through **Sources → Add → HEVC FLV
-Stream**, rather than through OBS's Media Source.
+这是一个输入源插件：请通过 **来源 → 添加 → HEVC FLV Stream** 添加，不要
+使用 OBS 自带的“媒体源”。
 
-## Install a prebuilt release
+## 使用已构建版本
 
-Download the package matching your operating system from the
-[latest GitHub Release](https://github.com/wtnl-zhi/obs-hevc-flv-source/releases/latest),
-then quit OBS before installing it.
+从 [最新 GitHub Release](https://github.com/wtnl-zhi/obs-hevc-flv-source/releases/latest)
+下载与操作系统对应的包。安装前请先退出 OBS。
 
 ### Windows x64
 
-1. Extract `obs-hevc-flv-source-windows-x64.zip` without flattening its
-   `obs-hevc-flv-source` folder.
-2. Copy that folder to `C:\ProgramData\obs-studio\plugins\`.
-3. Restart OBS and select **Sources → Add → HEVC FLV Stream**.
+1. 解压 `obs-hevc-flv-source-windows-x64.zip`，保留其中的
+   `obs-hevc-flv-source` 目录层级。
+2. 将该目录复制到 `C:\ProgramData\obs-studio\plugins\`。
+3. 重启 OBS，并通过 **来源 → 添加 → HEVC FLV Stream** 添加输入源。
 
-The final directory should contain
-`C:\ProgramData\obs-studio\plugins\obs-hevc-flv-source\bin\64bit\obs-hevc-flv-source.dll`.
+最终文件路径应为：
+`C:\ProgramData\obs-studio\plugins\obs-hevc-flv-source\bin\64bit\obs-hevc-flv-source.dll`。
 
-### macOS (Apple Silicon or Intel)
+### macOS（Apple Silicon 或 Intel）
 
-1. Extract `obs-hevc-flv-source-macos-universal.zip`.
-2. Copy `obs-hevc-flv-source.plugin` to
-   `~/Library/Application Support/obs-studio/plugins/`.
-3. Restart OBS and select **Sources → Add → HEVC FLV Stream**.
+1. 解压 `obs-hevc-flv-source-macos-universal.zip`。
+2. 将 `obs-hevc-flv-source.plugin` 复制到
+   `~/Library/Application Support/obs-studio/plugins/`。
+3. 重启 OBS，并通过 **来源 → 添加 → HEVC FLV Stream** 添加输入源。
 
-If macOS prevents an unsigned local plugin from loading, open the bundle once
-from Finder or re-sign it with your own Apple Development identity.
+如果 macOS 阻止加载未签名的本地插件，请先在 Finder 中打开一次插件包，或使用自己
+的 Apple Development 签名身份重新签名。
 
-## Build
+## 构建
 
-You need an OBS Studio development build/dependency tree that exports `libobs`
-and the FFmpeg CMake packages. The plugin and OBS must use compatible FFmpeg
-DLL/framework major versions.
+需要包含 `libobs` 和 FFmpeg CMake 包的 OBS Studio 开发构建/依赖目录。插件与
+OBS 必须使用兼容主版本的 FFmpeg DLL 或 Framework。
 
 ### Windows x64
 
-Install Visual Studio 2022 (Desktop C++), CMake 3.28+, and Ninja. Build from an
-x64 Native Tools command prompt:
+安装 Visual Studio 2022（Desktop C++）、CMake 3.28+ 和 Ninja，然后在 x64
+Native Tools 命令提示符中运行：
 
 ```powershell
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo `
@@ -64,7 +60,7 @@ cmake --build build
 cmake --install build --prefix package
 ```
 
-The generated layout is:
+生成目录结构：
 
 ```text
 package/
@@ -72,13 +68,13 @@ package/
   obs-hevc-flv-source/data/locale/en-US.ini
 ```
 
-Copy the `obs-hevc-flv-source` folder into
-`C:\ProgramData\obs-studio\plugins\`, then restart OBS.
+将 `obs-hevc-flv-source` 目录复制到
+`C:\ProgramData\obs-studio\plugins\`，然后重启 OBS。
 
-### macOS (Apple Silicon or Intel)
+### macOS（Apple Silicon 或 Intel）
 
-Install Xcode, CMake 3.28+, Ninja, and matching universal `libobs`/FFmpeg
-development dependencies. Build a universal bundle with:
+安装 Xcode、CMake 3.28+、Ninja，以及对应的通用 `libobs`/FFmpeg 开发依赖。可用
+以下命令构建通用插件包：
 
 ```zsh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -88,25 +84,22 @@ cmake --build build
 cmake --install build --prefix "$HOME/Library/Application Support/obs-studio/plugins"
 ```
 
-This installs `obs-hevc-flv-source.plugin` in OBS's per-user plugin directory.
-Restart OBS after installing. If OBS is running from a signed app bundle and
-macOS blocks an unsigned local plugin, build with your Apple Development signing
-identity and sign the produced `.plugin` bundle before loading it.
+该命令会将 `obs-hevc-flv-source.plugin` 安装到 OBS 的当前用户插件目录。安装后
+重启 OBS。若从已签名的 App Bundle 运行 OBS，且 macOS 阻止加载未签名的本地插件，
+请用 Apple Development 签名身份重新构建，并签名生成的 `.plugin` 包。
 
-## Use
+## 使用方式
 
-1. In OBS, select **Sources → Add → HEVC FLV Stream**.
-2. Paste the complete signed HTTP-FLV URL.
-3. Leave reconnect delay at 1500 ms unless the origin needs a longer interval.
-4. Check **Help → Log Files → View Current Log** for `[HEVC FLV]` messages.
+1. 在 OBS 中选择 **来源 → 添加 → HEVC FLV Stream**。
+2. 粘贴完整、带签名的 HTTP-FLV 地址。
+3. 除非源站要求更长间隔，否则保持重连延迟为 1500 ms。
+4. 通过 **帮助 → 日志文件 → 查看当前日志** 查找 `[HEVC FLV]` 日志。
 
-Signed CDN URLs expire. When a source stops reconnecting with an HTTP 403/404,
-obtain a fresh URL and replace it in the source properties.
+CDN 签名地址会过期。当来源持续因 HTTP 403/404 重连失败时，获取新的地址并在来源
+属性中替换。
 
-## Current scope
+## 当前范围
 
-The first implementation supports the conventional FLV packet layout used by
-the supplied stream: video tag `0x1c`, an HEVC configuration record, and
-length-prefixed HEVC access units; AAC uses the usual FLV AAC sequence header.
-It does not currently support AV1-FLV, metadata-driven quality switching,
-authenticated cookies, or non-AAC audio.
+首个实现支持本项目所用的常规 FLV 包格式：视频标签 `0x1c`、HEVC 配置记录、
+长度前缀的 HEVC 访问单元，以及常规 FLV AAC 序列头。当前不支持 AV1-FLV、
+通过元数据切换清晰度、Cookie 鉴权或非 AAC 音频。
