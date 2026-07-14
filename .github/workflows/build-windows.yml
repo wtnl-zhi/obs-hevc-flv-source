@@ -1,0 +1,47 @@
+name: Build Windows plugin
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package Windows x64
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build plugin
+        uses: ./.github/actions/build-plugin
+        with:
+          target: x64
+          config: RelWithDebInfo
+
+      - name: Create install archive
+        run: |
+          $archive = "release/obs-hevc-flv-source-windows-x64.zip"
+          if (Test-Path $archive) { Remove-Item $archive -Force }
+          Compress-Archive -Path "release/RelWithDebInfo/obs-hevc-flv-source" -DestinationPath $archive -CompressionLevel Optimal
+
+      - name: Upload Windows plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-hevc-flv-source-windows-x64
+          path: release/obs-hevc-flv-source-windows-x64.zip
+          if-no-files-found: error
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME "release/obs-hevc-flv-source-windows-x64.zip" --generate-notes

@@ -1,0 +1,7 @@
+.deps/
+build*/
+release/
+.ccache/
+.vs/
+*.user
+*.suo
