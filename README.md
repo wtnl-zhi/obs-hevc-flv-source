@@ -20,6 +20,32 @@ video frame.
 It is intentionally a source plugin: add it through **Sources → Add → HEVC FLV
 Stream**, rather than through OBS's Media Source.
 
+## Install a prebuilt release
+
+Download the package matching your operating system from the
+[latest GitHub Release](https://github.com/wtnl-zhi/obs-hevc-flv-source/releases/latest),
+then quit OBS before installing it.
+
+### Windows x64
+
+1. Extract `obs-hevc-flv-source-windows-x64.zip` without flattening its
+   `obs-hevc-flv-source` folder.
+2. Copy that folder to `C:\ProgramData\obs-studio\plugins\`.
+3. Restart OBS and select **Sources → Add → HEVC FLV Stream**.
+
+The final directory should contain
+`C:\ProgramData\obs-studio\plugins\obs-hevc-flv-source\bin\64bit\obs-hevc-flv-source.dll`.
+
+### macOS (Apple Silicon or Intel)
+
+1. Extract `obs-hevc-flv-source-macos-universal.zip`.
+2. Copy `obs-hevc-flv-source.plugin` to
+   `~/Library/Application Support/obs-studio/plugins/`.
+3. Restart OBS and select **Sources → Add → HEVC FLV Stream**.
+
+If macOS prevents an unsigned local plugin from loading, open the bundle once
+from Finder or re-sign it with your own Apple Development identity.
+
 ## Build
 
 You need an OBS Studio development build/dependency tree that exports `libobs`
@@ -42,12 +68,12 @@ The generated layout is:
 
 ```text
 package/
-  obs-plugins/64bit/obs-hevc-flv-source.dll
-  data/obs-plugins/obs-hevc-flv-source/locale/en-US.ini
+  obs-hevc-flv-source/bin/64bit/obs-hevc-flv-source.dll
+  obs-hevc-flv-source/data/locale/en-US.ini
 ```
 
-Copy those two folders into the root of a **matching 64-bit OBS installation**
-(or use the `package` directory as a portable OBS overlay), then restart OBS.
+Copy the `obs-hevc-flv-source` folder into
+`C:\ProgramData\obs-studio\plugins\`, then restart OBS.
 
 ### macOS (Apple Silicon or Intel)
 
