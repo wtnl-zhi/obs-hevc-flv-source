@@ -1,5 +1,7 @@
 # OBS HEVC-FLV Source
 
+**English** | [简体中文](README.zh-CN.md)
+
 This is a native Windows and macOS OBS input-source plugin for HTTP-FLV streams
 whose video tag is HEVC/H.265 (`CodecID = 12`). It bypasses the incompatibility
 that causes OBS's ordinary Media Source to play AAC audio while showing a black
