@@ -600,9 +600,9 @@ obs_source_info source_info = {
 	.get_name = source_name,
 	.create = source_create,
 	.destroy = source_destroy,
-	.update = source_update,
 	.get_defaults = source_defaults,
 	.get_properties = source_properties,
+	.update = source_update,
 };
 
 } // namespace
