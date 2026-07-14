@@ -1,5 +1,5 @@
 .deps/
-build*/
+/build*/
 release/
 .ccache/
 cmake/.CMakeBuildNumber
