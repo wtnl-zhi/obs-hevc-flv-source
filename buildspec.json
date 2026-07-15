@@ -38,7 +38,7 @@
   },
   "name": "obs-hevc-flv-source",
   "displayName": "OBS HEVC-FLV Source",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "author": "wtnl-zhi",
   "website": "https://github.com/wtnl-zhi/obs-hevc-flv-source",
   "email": ""

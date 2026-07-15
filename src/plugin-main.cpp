@@ -418,8 +418,15 @@ private:
 
 		URL_COMPONENTS components{};
 		components.dwStructSize = sizeof(components);
+		// Ask WinHTTP to return pointers into wide_url for each parsed component.
+		// Leaving these lengths at zero makes the host/path empty, so WinHttpConnect
+		// fails before the HTTP request is sent.
+		components.dwSchemeLength = DWORD(-1);
+		components.dwHostNameLength = DWORD(-1);
+		components.dwUrlPathLength = DWORD(-1);
+		components.dwExtraInfoLength = DWORD(-1);
 		if (!WinHttpCrackUrl(wide_url.c_str(), 0, 0, &components)) {
-			blog(LOG_ERROR, "[HEVC FLV] Invalid URL");
+			blog(LOG_ERROR, "[HEVC FLV] Invalid URL (WinHttpCrackUrl error %lu)", GetLastError());
 			return false;
 		}
 		const std::wstring host(components.lpszHostName, components.dwHostNameLength);
@@ -429,8 +436,10 @@ private:
 
 		HINTERNET session = WinHttpOpen(L"OBS HEVC-FLV Source/0.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
 					       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-		if (!session)
+		if (!session) {
+			blog(LOG_ERROR, "[HEVC FLV] WinHttpOpen failed (error %lu)", GetLastError());
 			return false;
+		}
 		HINTERNET connection = WinHttpConnect(session, host.c_str(), components.nPort, 0);
 		HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", path.c_str(), nullptr,
 							      WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
@@ -439,6 +448,8 @@ private:
 		if (!request || !WinHttpSendRequest(request, L"User-Agent: OBS HEVC-FLV Source\r\n", -1L,
 							       WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
 		    !WinHttpReceiveResponse(request, nullptr)) {
+			const DWORD error = GetLastError();
+			blog(LOG_ERROR, "[HEVC FLV] WinHTTP request failed (error %lu)", error);
 			if (request)
 				WinHttpCloseHandle(request);
 			if (connection)
@@ -466,7 +477,11 @@ private:
 		std::array<uint8_t, 64 * 1024> chunk{};
 		while (!stop_requested_) {
 			DWORD received = 0;
-			if (!WinHttpReadData(request, chunk.data(), DWORD(chunk.size()), &received) || received == 0)
+			if (!WinHttpReadData(request, chunk.data(), DWORD(chunk.size()), &received)) {
+				blog(LOG_WARNING, "[HEVC FLV] WinHttpReadData failed (error %lu)", GetLastError());
+				break;
+			}
+			if (received == 0)
 				break;
 			flv_data.insert(flv_data.end(), chunk.data(), chunk.data() + received);
 			consume_flv(flv_data, offset, header_parsed);
