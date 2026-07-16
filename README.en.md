@@ -3,17 +3,18 @@
 [简体中文](README.md) | **English**
 
 This is a native Windows and macOS OBS input-source plugin for HTTP-FLV streams
-whose video tag is HEVC/H.265 (`CodecID = 12`). It bypasses the incompatibility
-that causes OBS's ordinary Media Source to play AAC audio while showing a black
-video frame.
+whose video tag is H.264/AVC (`CodecID = 7`) or HEVC/H.265 (`CodecID = 12`). It
+bypasses the incompatibility that can cause OBS's ordinary Media Source to play
+AAC audio while showing a black video frame.
 
 ## What it does
 
-- Pulls `http://` and `https://` FLV URLs with WinHTTP on Windows and the
-  system CFNetwork HTTP stream on macOS.
-- Parses FLV tags itself, including HEVC sequence headers (`hvcC`) and AAC
+- Pulls `http://` and `https://` FLV URLs with WinHTTP on Windows and libcurl
+  on macOS.
+- Parses FLV tags itself, including H.264 (`avcC`), HEVC (`hvcC`), and AAC
   sequence headers.
-- Uses the FFmpeg libraries supplied with an OBS SDK/build to decode HEVC/AAC.
+- Uses the FFmpeg libraries supplied with an OBS SDK/build to decode H.264,
+  HEVC, and AAC.
 - Converts decoded video to BGRA and sends raw video/audio frames to OBS.
 - Reconnects after the configured delay when the source closes or fails.
 - Accepts a Douyin live-room URL (including a shared short link) and resolves its HTTP-FLV stream automatically.
@@ -78,8 +79,9 @@ Copy the `obs-hevc-flv-source` folder into
 
 ### macOS (Apple Silicon or Intel)
 
-Install Xcode, CMake 3.28+, Ninja, and matching universal `libobs`/FFmpeg
-development dependencies. Build a universal bundle with:
+Install Xcode, CMake 3.28+, Ninja, a libcurl installation discoverable by
+CMake, and matching universal `libobs`/FFmpeg development dependencies. Build
+a universal bundle with:
 
 ```zsh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -110,11 +112,17 @@ browser developer tools. Resolution can fail when the room is offline, requires
 sign-in, or Douyin changes its web interface; see the `[HEVC FLV]` OBS log
 messages in that case.
 
+On macOS, if Douyin returns a CAPTCHA interstitial to the plugin, keep the same
+room open in a Chrome tab. The plugin reads only the page's public script state
+to obtain the current FLV URL; it does not read cookies, local storage,
+passwords, or account data. macOS may ask for permission for OBS to control
+Chrome. Once allowed, no manual browser-network inspection is needed.
+
 ## Current scope
 
-The first implementation supports the conventional FLV packet layout used by
-the supplied stream: video tag `0x1c`, an HEVC configuration record, and
-length-prefixed HEVC access units; AAC uses the usual FLV AAC sequence header.
-It does not currently support AV1-FLV, metadata-driven quality switching,
-authenticated cookies, or non-AAC audio. Douyin link resolution is limited to
-public rooms that can be accessed without sign-in.
+The current implementation supports conventional FLV packet layouts with H.264
+video tag `0x17`, HEVC video tag `0x1c`, their corresponding configuration
+records and length-prefixed access units, plus the usual FLV AAC sequence
+header. It does not currently support AV1-FLV, metadata-driven quality
+switching, authenticated cookies, or non-AAC audio. Douyin link resolution is
+limited to public rooms that can be accessed without sign-in.
