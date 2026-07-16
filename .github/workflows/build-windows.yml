@@ -1,4 +1,4 @@
-name: Build Windows plugin
+name: Build release packages
 
 on:
   push:
@@ -6,12 +6,17 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to build and update (for example v0.1.4)
+        required: false
+        type: string
 
 permissions:
   contents: write
 
 jobs:
-  package:
+  package-windows:
     name: Package Windows x64
     runs-on: windows-2022
     defaults:
@@ -39,13 +44,51 @@ jobs:
           path: release/obs-hevc-flv-source-windows-x64.zip
           if-no-files-found: error
 
-      - name: Publish tagged release
-        if: startsWith(github.ref, 'refs/tags/v')
+  package-macos:
+    name: Package macOS Universal
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure macOS build
+        run: cmake --preset macos-ci
+
+      - name: Build macOS plugin
+        run: cmake --build --preset macos-ci
+
+      - name: Create install archive
+        run: |
+          cmake --install build_macos --config RelWithDebInfo --prefix "$GITHUB_WORKSPACE/release"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "release/obs-hevc-flv-source.plugin" \
+            "release/obs-hevc-flv-source-macos-universal.zip"
+
+      - name: Upload macOS plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-hevc-flv-source-macos-universal
+          path: release/obs-hevc-flv-source-macos-universal.zip
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+    needs: [package-windows, package-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
-          if (gh release view $env:GITHUB_REF_NAME) {
-            gh release upload $env:GITHUB_REF_NAME "release/obs-hevc-flv-source-windows-x64.zip" --clobber
-          } else {
-            gh release create $env:GITHUB_REF_NAME "release/obs-hevc-flv-source-windows-x64.zip" --generate-notes
-          }
+          if gh release view "$RELEASE_TAG"; then
+            gh release upload "$RELEASE_TAG" release-assets/*.zip --clobber
+          else
+            gh release create "$RELEASE_TAG" release-assets/*.zip --generate-notes
+          fi
