@@ -353,7 +353,17 @@ std::string resolve_douyin_stream_url(const std::string &input)
 		return {};
 	}
 
-	const std::string api_url = "https://live.douyin.com/webcast/room/info_by_scene/?aid=6383&device_platform=web&web_rid=" + room_id;
+	const std::string api_url =
+		"https://live.douyin.com/webcast/room/web/enter/?aid=6383&app_name=douyin_web&live_id=1"
+		"&device_platform=web&language=zh-CN&enter_from=web_others_homepage&cookie_enabled=true"
+		"&screen_width=1920&screen_height=1080&browser_language=zh-CN&browser_platform="
+#if defined(_WIN32)
+		"Win32"
+#else
+		"MacIntel"
+#endif
+		"&browser_name=Chrome&browser_version=131.0.0.0&web_rid=" +
+		room_id;
 	std::string response;
 	std::string ignored_final_url;
 	if (!fetch_text(api_url, response, ignored_final_url)) {
