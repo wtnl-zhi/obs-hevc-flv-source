@@ -318,8 +318,9 @@ bool fetch_text(const std::string &url, std::string &body, std::string &final_ur
 	CFTypeRef final_value = CFReadStreamCopyProperty(stream, kCFStreamPropertyHTTPFinalURL);
 	if (final_value) {
 		std::array<char, 4096> final_buffer{};
-		if (CFStringGetCString(static_cast<CFStringRef>(final_value), final_buffer.data(), CFIndex(final_buffer.size()),
-					       kCFStringEncodingUTF8))
+		const CFStringRef final_string = CFURLGetString(static_cast<CFURLRef>(final_value));
+		if (final_string && CFStringGetCString(final_string, final_buffer.data(), CFIndex(final_buffer.size()),
+						       kCFStringEncodingUTF8))
 			final_url = final_buffer.data();
 		CFRelease(final_value);
 	}
