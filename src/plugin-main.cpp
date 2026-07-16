@@ -28,6 +28,7 @@ extern "C" {
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -89,6 +90,294 @@ std::string ffmpeg_error(int error)
 	std::array<char, AV_ERROR_MAX_STRING_SIZE> buffer{};
 	av_strerror(error, buffer.data(), buffer.size());
 	return buffer.data();
+}
+
+bool is_http_url(const std::string &value)
+{
+	return value.starts_with("http://") || value.starts_with("https://");
+}
+
+std::string unescape_json_string(const std::string &value)
+{
+	std::string result;
+	result.reserve(value.size());
+	for (size_t index = 0; index < value.size(); ++index) {
+		if (value[index] != '\\' || index + 1 >= value.size()) {
+			result += value[index];
+			continue;
+		}
+
+		const char escaped = value[++index];
+		switch (escaped) {
+		case '"':
+		case '\\':
+		case '/':
+			result += escaped;
+			break;
+		case 'b':
+			result += '\b';
+			break;
+		case 'f':
+			result += '\f';
+			break;
+		case 'n':
+			result += '\n';
+			break;
+		case 'r':
+			result += '\r';
+			break;
+		case 't':
+			result += '\t';
+			break;
+		case 'u': {
+			if (index + 4 >= value.size())
+				return {};
+			unsigned codepoint = 0;
+			for (size_t digit = 1; digit <= 4; ++digit) {
+				const char value_digit = value[index + digit];
+				if (!std::isxdigit(static_cast<unsigned char>(value_digit)))
+					return {};
+				codepoint *= 16;
+				codepoint += std::isdigit(static_cast<unsigned char>(value_digit))
+						     ? unsigned(value_digit - '0')
+						     : unsigned(std::tolower(static_cast<unsigned char>(value_digit)) - 'a' + 10);
+			}
+			if (codepoint <= 0x7f)
+				result += char(codepoint);
+			else
+				return {};
+			index += 4;
+			break;
+		}
+		default:
+			return {};
+		}
+	}
+	return result;
+}
+
+std::string find_json_string(const std::string &text, const char *key, size_t start = 0)
+{
+	const std::string quoted_key = std::string("\"") + key + "\"";
+	const size_t key_position = text.find(quoted_key, start);
+	if (key_position == std::string::npos)
+		return {};
+	const size_t colon = text.find(':', key_position + quoted_key.size());
+	if (colon == std::string::npos)
+		return {};
+	const size_t value_start = text.find_first_not_of(" \t\r\n", colon + 1);
+	if (value_start == std::string::npos || text[value_start] != '"')
+		return {};
+
+	std::string encoded;
+	for (size_t index = value_start + 1; index < text.size(); ++index) {
+		if (text[index] == '"' && (index == value_start + 1 || text[index - 1] != '\\'))
+			return unescape_json_string(encoded);
+		encoded += text[index];
+	}
+	return {};
+}
+
+std::string first_http_url(const std::string &text, size_t start = 0)
+{
+	const size_t http = text.find("http", start);
+	if (http == std::string::npos)
+		return {};
+	const size_t end = text.find_first_of("\"'\\ \t\r\n<>", http);
+	const std::string candidate = text.substr(http, end == std::string::npos ? std::string::npos : end - http);
+	return is_http_url(candidate) ? candidate : std::string{};
+}
+
+std::string find_douyin_room_id(const std::string &text)
+{
+	constexpr std::array<const char *, 3> markers = {"live.douyin.com/", "live.douyin.com%2F",
+											 "live.douyin.com\\u002F"};
+	for (const char *marker : markers) {
+		const size_t marker_position = text.find(marker);
+		if (marker_position == std::string::npos)
+			continue;
+		const size_t first_digit = marker_position + std::strlen(marker);
+		size_t end = first_digit;
+		while (end < text.size() && std::isdigit(static_cast<unsigned char>(text[end])))
+			++end;
+		if (end > first_digit)
+			return text.substr(first_digit, end - first_digit);
+	}
+	return {};
+}
+
+#if defined(_WIN32)
+bool fetch_text(const std::string &url, std::string &body, std::string &final_url)
+{
+	const std::wstring wide_url = utf8_to_wide(url);
+	if (wide_url.empty())
+		return false;
+	URL_COMPONENTS components{};
+	components.dwStructSize = sizeof(components);
+	components.dwSchemeLength = DWORD(-1);
+	components.dwHostNameLength = DWORD(-1);
+	components.dwUrlPathLength = DWORD(-1);
+	components.dwExtraInfoLength = DWORD(-1);
+	if (!WinHttpCrackUrl(wide_url.c_str(), 0, 0, &components))
+		return false;
+
+	const std::wstring host(components.lpszHostName, components.dwHostNameLength);
+	std::wstring path(components.lpszUrlPath, components.dwUrlPathLength);
+	if (components.dwExtraInfoLength > 0)
+		path.append(components.lpszExtraInfo, components.dwExtraInfoLength);
+	HINTERNET session = WinHttpOpen(L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+					       WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+	if (!session)
+		return false;
+	WinHttpSetTimeouts(session, 5000, 5000, 5000, 8000);
+	HINTERNET connection = WinHttpConnect(session, host.c_str(), components.nPort, 0);
+	HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", path.c_str(), nullptr,
+							      WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+							      components.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0)
+						 : nullptr;
+	const wchar_t *headers = L"Accept: application/json, text/plain, */*\r\nAccept-Encoding: identity\r\nReferer: https://live.douyin.com/\r\n";
+	const bool received = request && WinHttpSendRequest(request, headers, DWORD(-1), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+			      WinHttpReceiveResponse(request, nullptr);
+	DWORD status = 0;
+	DWORD status_size = sizeof(status);
+	if (received)
+		WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &status, &status_size,
+					    nullptr);
+	if (!received || status != 200) {
+		if (request)
+			WinHttpCloseHandle(request);
+		if (connection)
+			WinHttpCloseHandle(connection);
+		WinHttpCloseHandle(session);
+		return false;
+	}
+
+	DWORD final_url_size = 0;
+	WinHttpQueryOption(request, WINHTTP_OPTION_URL, nullptr, &final_url_size);
+	if (GetLastError() == ERROR_INSUFFICIENT_BUFFER && final_url_size > sizeof(wchar_t)) {
+		std::wstring final_wide(final_url_size / sizeof(wchar_t), L'\0');
+		if (WinHttpQueryOption(request, WINHTTP_OPTION_URL, final_wide.data(), &final_url_size)) {
+			const int utf8_size = WideCharToMultiByte(CP_UTF8, 0, final_wide.c_str(), -1, nullptr, 0, nullptr, nullptr);
+			if (utf8_size > 1) {
+				final_url.resize(size_t(utf8_size));
+				WideCharToMultiByte(CP_UTF8, 0, final_wide.c_str(), -1, final_url.data(), utf8_size, nullptr, nullptr);
+				final_url.resize(size_t(utf8_size - 1));
+			}
+		}
+	}
+
+	std::array<char, 16 * 1024> chunk{};
+	while (body.size() < 2 * 1024 * 1024) {
+		DWORD received_bytes = 0;
+		if (!WinHttpReadData(request, chunk.data(), DWORD(chunk.size()), &received_bytes) || received_bytes == 0)
+			break;
+		body.append(chunk.data(), received_bytes);
+	}
+	WinHttpCloseHandle(request);
+	WinHttpCloseHandle(connection);
+	WinHttpCloseHandle(session);
+	return !body.empty();
+}
+#elif defined(__APPLE__)
+bool fetch_text(const std::string &url, std::string &body, std::string &final_url)
+{
+	CFURLRef request_url = CFURLCreateWithBytes(kCFAllocatorDefault, reinterpret_cast<const UInt8 *>(url.data()),
+							      CFIndex(url.size()), kCFStringEncodingUTF8, nullptr);
+	if (!request_url)
+		return false;
+	CFHTTPMessageRef request = CFHTTPMessageCreateRequest(kCFAllocatorDefault, CFSTR("GET"), request_url, kCFHTTPVersion1_1);
+	CFRelease(request_url);
+	if (!request)
+		return false;
+	CFHTTPMessageSetHeaderFieldValue(request, CFSTR("User-Agent"), CFSTR("Mozilla/5.0"));
+	CFHTTPMessageSetHeaderFieldValue(request, CFSTR("Accept-Encoding"), CFSTR("identity"));
+	CFReadStreamRef stream = CFReadStreamCreateForHTTPRequest(kCFAllocatorDefault, request);
+	CFRelease(request);
+	if (!stream)
+		return false;
+	CFReadStreamSetProperty(stream, kCFStreamPropertyHTTPShouldAutoredirect, kCFBooleanTrue);
+	if (!CFReadStreamOpen(stream)) {
+		CFRelease(stream);
+		return false;
+	}
+
+	std::array<uint8_t, 16 * 1024> chunk{};
+	while (body.size() < 2 * 1024 * 1024) {
+		if (CFReadStreamHasBytesAvailable(stream)) {
+			const CFIndex received = CFReadStreamRead(stream, chunk.data(), CFIndex(chunk.size()));
+			if (received <= 0)
+				break;
+			body.append(reinterpret_cast<const char *>(chunk.data()), size_t(received));
+			continue;
+		}
+		const CFStreamStatus status = CFReadStreamGetStatus(stream);
+		if (status == kCFStreamStatusAtEnd || status == kCFStreamStatusError || status == kCFStreamStatusClosed)
+			break;
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	CFTypeRef final_value = CFReadStreamCopyProperty(stream, kCFStreamPropertyHTTPFinalURL);
+	if (final_value) {
+		std::array<char, 4096> final_buffer{};
+		if (CFStringGetCString(static_cast<CFStringRef>(final_value), final_buffer.data(), CFIndex(final_buffer.size()),
+					       kCFStringEncodingUTF8))
+			final_url = final_buffer.data();
+		CFRelease(final_value);
+	}
+	CFReadStreamClose(stream);
+	CFRelease(stream);
+	return !body.empty();
+}
+#endif
+
+std::string resolve_douyin_stream_url(const std::string &input)
+{
+	if (input.find("douyin.com") == std::string::npos)
+		return input;
+
+	std::string room_id = find_douyin_room_id(input);
+	if (room_id.empty()) {
+		const std::string shared_url = first_http_url(input);
+		std::string landing_page;
+		std::string final_url;
+		if (shared_url.empty() || !fetch_text(shared_url, landing_page, final_url)) {
+			blog(LOG_WARNING, "[HEVC FLV] Could not open the Douyin shared link");
+			return {};
+		}
+		room_id = find_douyin_room_id(final_url);
+		if (room_id.empty())
+			room_id = find_douyin_room_id(landing_page);
+	}
+	if (room_id.empty()) {
+		blog(LOG_WARNING, "[HEVC FLV] This Douyin link did not resolve to a live room");
+		return {};
+	}
+
+	const std::string api_url = "https://live.douyin.com/webcast/room/info_by_scene/?aid=6383&device_platform=web&web_rid=" + room_id;
+	std::string response;
+	std::string ignored_final_url;
+	if (!fetch_text(api_url, response, ignored_final_url)) {
+		blog(LOG_WARNING, "[HEVC FLV] Could not obtain the Douyin live-room stream information");
+		return {};
+	}
+	const size_t stream_urls = response.find("\"flv_pull_url\"");
+	if (stream_urls == std::string::npos) {
+		blog(LOG_WARNING, "[HEVC FLV] The Douyin room is offline or did not provide an FLV stream");
+		return {};
+	}
+	for (const char *quality : {"FULL_HD1", "HD1", "SD1", "SD2", "LD"}) {
+		const std::string url = find_json_string(response, quality, stream_urls);
+		if (is_http_url(url)) {
+			blog(LOG_INFO, "[HEVC FLV] Resolved Douyin room %s (%s)", room_id.c_str(), quality);
+			return url;
+		}
+	}
+	const std::string url = find_json_string(response, "flv_pull_url", stream_urls);
+	if (is_http_url(url)) {
+		blog(LOG_INFO, "[HEVC FLV] Resolved Douyin room %s", room_id.c_str());
+		return url;
+	}
+	blog(LOG_WARNING, "[HEVC FLV] The Douyin room did not provide a usable FLV URL");
+	return {};
 }
 
 class HevcFlvSource {
@@ -561,7 +850,9 @@ private:
 		blog(LOG_INFO, "[HEVC FLV] Starting source");
 		while (!stop_requested_) {
 			free_decoders();
-			stream_once(url);
+			const std::string stream_url = resolve_douyin_stream_url(url);
+			if (!stream_url.empty())
+				stream_once(stream_url);
 			if (!stop_requested_)
 				blog(LOG_INFO, "[HEVC FLV] Connection closed; reconnecting");
 			if (!wait_for_reconnect())

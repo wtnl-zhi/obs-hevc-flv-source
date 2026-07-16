@@ -16,6 +16,7 @@ video frame.
 - Uses the FFmpeg libraries supplied with an OBS SDK/build to decode HEVC/AAC.
 - Converts decoded video to BGRA and sends raw video/audio frames to OBS.
 - Reconnects after the configured delay when the source closes or fails.
+- Accepts a Douyin live-room URL (including a shared short link) and resolves its HTTP-FLV stream automatically.
 
 It is intentionally a source plugin: add it through **Sources → Add → HEVC FLV
 Stream**, rather than through OBS's Media Source.
@@ -96,12 +97,18 @@ identity and sign the produced `.plugin` bundle before loading it.
 ## Use
 
 1. In OBS, select **Sources → Add → HEVC FLV Stream**.
-2. Paste the complete signed HTTP-FLV URL.
+2. Paste the complete signed HTTP-FLV URL, or paste a Douyin live-room URL/shared short link directly.
 3. Leave reconnect delay at 1500 ms unless the origin needs a longer interval.
 4. Check **Help → Log Files → View Current Log** for `[HEVC FLV]` messages.
 
 Signed CDN URLs expire. When a source stops reconnecting with an HTTP 403/404,
 obtain a fresh URL and replace it in the source properties.
+
+For public Douyin rooms, the plugin obtains a fresh FLV URL before the initial
+connection and each reconnect, so there is no need to copy a signed URL from
+browser developer tools. Resolution can fail when the room is offline, requires
+sign-in, or Douyin changes its web interface; see the `[HEVC FLV]` OBS log
+messages in that case.
 
 ## Current scope
 
@@ -109,4 +116,5 @@ The first implementation supports the conventional FLV packet layout used by
 the supplied stream: video tag `0x1c`, an HEVC configuration record, and
 length-prefixed HEVC access units; AAC uses the usual FLV AAC sequence header.
 It does not currently support AV1-FLV, metadata-driven quality switching,
-authenticated cookies, or non-AAC audio.
+authenticated cookies, or non-AAC audio. Douyin link resolution is limited to
+public rooms that can be accessed without sign-in.
