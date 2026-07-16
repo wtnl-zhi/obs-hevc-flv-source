@@ -32,7 +32,8 @@ target_link_libraries(
 if(OS_WINDOWS)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE winhttp)
 elseif(OS_MACOS)
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "-framework CFNetwork" "-framework CoreFoundation")
+  find_package(CURL REQUIRED)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CURL::libcurl "-framework CFNetwork" "-framework CoreFoundation")
   target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -Wno-deprecated-declarations)
 endif()
 

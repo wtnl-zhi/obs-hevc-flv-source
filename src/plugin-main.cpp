@@ -23,6 +23,7 @@ extern "C" {
 #elif defined(__APPLE__)
 #include <CFNetwork/CFNetwork.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <curl/curl.h>
 #endif
 
 #include <algorithm>
@@ -31,6 +32,7 @@ extern "C" {
 #include <cctype>
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -47,6 +49,7 @@ namespace {
 constexpr uint8_t kFlvTagAudio = 8;
 constexpr uint8_t kFlvTagVideo = 9;
 constexpr uint8_t kFlvAudioAac = 10;
+constexpr uint8_t kFlvVideoAvc = 7;
 constexpr uint8_t kFlvVideoHevc = 12;
 
 uint32_t read_be24(const uint8_t *data)
@@ -178,6 +181,28 @@ std::string find_json_string(const std::string &text, const char *key, size_t st
 	return {};
 }
 
+std::string find_escaped_json_string(const std::string &text, const char *key, size_t start = 0)
+{
+	const std::string escaped_key = std::string("\\\"") + key + "\\\"";
+	const size_t key_position = text.find(escaped_key, start);
+	if (key_position == std::string::npos)
+		return {};
+	const size_t colon = text.find(':', key_position + escaped_key.size());
+	if (colon == std::string::npos)
+		return {};
+	const size_t value_start = text.find_first_not_of(" \t\r\n", colon + 1);
+	if (value_start == std::string::npos || text.compare(value_start, 2, "\\\"") != 0)
+		return {};
+
+	std::string encoded;
+	for (size_t index = value_start + 2; index + 1 < text.size(); ++index) {
+		if (text[index] == '\\' && text[index + 1] == '\"')
+			return unescape_json_string(encoded);
+		encoded += text[index];
+	}
+	return {};
+}
+
 std::string first_http_url(const std::string &text, size_t start = 0)
 {
 	const size_t http = text.find("http", start);
@@ -279,56 +304,137 @@ bool fetch_text(const std::string &url, std::string &body, std::string &final_ur
 	return !body.empty();
 }
 #elif defined(__APPLE__)
+size_t curl_write_body(char *data, size_t size, size_t count, void *user_data)
+{
+	const size_t received = size * count;
+	auto *body = static_cast<std::string *>(user_data);
+	if (received == 0 || body->size() + received > 2 * 1024 * 1024)
+		return 0;
+	body->append(data, received);
+	return received;
+}
+
 bool fetch_text(const std::string &url, std::string &body, std::string &final_url)
 {
-	CFURLRef request_url = CFURLCreateWithBytes(kCFAllocatorDefault, reinterpret_cast<const UInt8 *>(url.data()),
-							      CFIndex(url.size()), kCFStringEncodingUTF8, nullptr);
-	if (!request_url)
+	static std::once_flag curl_initialized;
+	std::call_once(curl_initialized, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+	CURL *curl = curl_easy_init();
+	if (!curl)
 		return false;
-	CFHTTPMessageRef request = CFHTTPMessageCreateRequest(kCFAllocatorDefault, CFSTR("GET"), request_url, kCFHTTPVersion1_1);
-	CFRelease(request_url);
-	if (!request)
-		return false;
-	CFHTTPMessageSetHeaderFieldValue(request, CFSTR("User-Agent"), CFSTR("Mozilla/5.0"));
-	CFHTTPMessageSetHeaderFieldValue(request, CFSTR("Accept-Encoding"), CFSTR("identity"));
-	CFReadStreamRef stream = CFReadStreamCreateForHTTPRequest(kCFAllocatorDefault, request);
-	CFRelease(request);
-	if (!stream)
-		return false;
-	CFReadStreamSetProperty(stream, kCFStreamPropertyHTTPShouldAutoredirect, kCFBooleanTrue);
-	if (!CFReadStreamOpen(stream)) {
-		CFRelease(stream);
+	struct curl_slist *headers = nullptr;
+	const bool is_douyin_live_page = url.starts_with("https://live.douyin.com/") &&
+					 url.find("/webcast/") == std::string::npos;
+	if (!is_douyin_live_page) {
+		headers = curl_slist_append(headers, "Accept: application/json, text/plain, */*");
+		headers = curl_slist_append(headers, "Accept-Encoding: identity");
+		headers = curl_slist_append(headers, "Referer: https://live.douyin.com/");
+	}
+	curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+	if (headers)
+		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_USERAGENT,
+			 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36");
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+	curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2TLS);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_body);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+	const CURLcode result = curl_easy_perform(curl);
+	long status = 0;
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+	char *effective_url = nullptr;
+	curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &effective_url);
+	if (effective_url)
+		final_url = effective_url;
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	if (result != CURLE_OK || status != 200) {
+		blog(LOG_WARNING, "[HEVC FLV] HTTP request failed (%s, status %ld)", curl_easy_strerror(result), status);
 		return false;
 	}
-
-	std::array<uint8_t, 16 * 1024> chunk{};
-	while (body.size() < 2 * 1024 * 1024) {
-		if (CFReadStreamHasBytesAvailable(stream)) {
-			const CFIndex received = CFReadStreamRead(stream, chunk.data(), CFIndex(chunk.size()));
-			if (received <= 0)
-				break;
-			body.append(reinterpret_cast<const char *>(chunk.data()), size_t(received));
-			continue;
-		}
-		const CFStreamStatus status = CFReadStreamGetStatus(stream);
-		if (status == kCFStreamStatusAtEnd || status == kCFStreamStatusError || status == kCFStreamStatusClosed)
-			break;
-		std::this_thread::sleep_for(std::chrono::milliseconds(10));
-	}
-	CFTypeRef final_value = CFReadStreamCopyProperty(stream, kCFStreamPropertyHTTPFinalURL);
-	if (final_value) {
-		std::array<char, 4096> final_buffer{};
-		const CFStringRef final_string = CFURLGetString(static_cast<CFURLRef>(final_value));
-		if (final_string && CFStringGetCString(final_string, final_buffer.data(), CFIndex(final_buffer.size()),
-						       kCFStringEncodingUTF8))
-			final_url = final_buffer.data();
-		CFRelease(final_value);
-	}
-	CFReadStreamClose(stream);
-	CFRelease(stream);
 	return !body.empty();
 }
+
+bool fetch_douyin_live_page(const std::string &room_id, std::string &body)
+{
+	if (room_id.empty() || !std::all_of(room_id.begin(), room_id.end(), [](unsigned char c) { return std::isdigit(c); }))
+		return false;
+	const std::string command =
+		"/usr/bin/curl --silent --show-error --location --connect-timeout 5 --max-time 10 "
+		"-A 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36' "
+		"'https://live.douyin.com/" +
+		room_id + "'";
+	FILE *pipe = popen(command.c_str(), "r");
+	if (!pipe)
+		return false;
+	std::array<char, 16 * 1024> chunk{};
+	while (body.size() < 2 * 1024 * 1024) {
+		const size_t received = fread(chunk.data(), 1, chunk.size(), pipe);
+		if (received == 0)
+			break;
+		body.append(chunk.data(), received);
+	}
+	const int status = pclose(pipe);
+	return status == 0 && !body.empty();
+}
+
+bool fetch_douyin_chrome_page_state(const std::string &room_id, std::string &body)
+{
+	if (room_id.empty() || !std::all_of(room_id.begin(), room_id.end(), [](unsigned char c) { return std::isdigit(c); }))
+		return false;
+	// This only asks Chrome for the public script state of the matching open
+	// live page. It never requests cookies, storage, passwords, or account data.
+	const std::string command =
+		"/usr/bin/osascript -e 'with timeout of 3 seconds' -e 'tell application \"Google Chrome\"' "
+		"-e 'repeat with w in windows' -e 'repeat with t in tabs of w' "
+		"-e 'if (URL of t) contains \"live.douyin.com/" +
+		room_id +
+		"\" then' "
+		"-e 'return execute t javascript \"[...document.scripts].map(s => s.textContent).find(s => "
+		"s.includes(\\\"flv_pull_url\\\")) || \\\"\\\"\"' "
+		"-e 'end if' -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'end timeout'";
+	FILE *pipe = popen(command.c_str(), "r");
+	if (!pipe)
+		return false;
+	std::array<char, 16 * 1024> chunk{};
+	while (body.size() < 2 * 1024 * 1024) {
+		const size_t received = fread(chunk.data(), 1, chunk.size(), pipe);
+		if (received == 0)
+			break;
+		body.append(chunk.data(), received);
+	}
+	const int status = pclose(pipe);
+	return status == 0 && !body.empty();
+}
 #endif
+
+std::string find_douyin_flv_url(const std::string &response, const std::string &room_id)
+{
+	size_t stream_urls = response.find("\"flv_pull_url\"");
+	const bool escaped_json = stream_urls == std::string::npos;
+	if (escaped_json)
+		stream_urls = response.find("\\\"flv_pull_url\\\"");
+	if (stream_urls == std::string::npos) {
+		blog(LOG_INFO, "[HEVC FLV] Douyin page did not contain FLV state (bytes=%zu)", response.size());
+		return {};
+	}
+	for (const char *quality : {"FULL_HD1", "HD1", "SD1", "SD2", "LD"}) {
+		const std::string url = escaped_json ? find_escaped_json_string(response, quality, stream_urls)
+							     : find_json_string(response, quality, stream_urls);
+		if (is_http_url(url)) {
+			blog(LOG_INFO, "[HEVC FLV] Resolved Douyin room %s (%s)", room_id.c_str(), quality);
+			return url;
+		}
+	}
+	const std::string url = escaped_json ? find_escaped_json_string(response, "flv_pull_url", stream_urls)
+						     : find_json_string(response, "flv_pull_url", stream_urls);
+	if (is_http_url(url)) {
+		blog(LOG_INFO, "[HEVC FLV] Resolved Douyin room %s", room_id.c_str());
+		return url;
+	}
+	return {};
+}
 
 std::string resolve_douyin_stream_url(const std::string &input)
 {
@@ -353,41 +459,33 @@ std::string resolve_douyin_stream_url(const std::string &input)
 		return {};
 	}
 
-	const std::string api_url =
-		"https://live.douyin.com/webcast/room/web/enter/?aid=6383&app_name=douyin_web&live_id=1"
-		"&device_platform=web&language=zh-CN&enter_from=web_others_homepage&cookie_enabled=true"
-		"&screen_width=1920&screen_height=1080&browser_language=zh-CN&browser_platform="
-#if defined(_WIN32)
-		"Win32"
-#else
-		"MacIntel"
-#endif
-		"&browser_name=Chrome&browser_version=131.0.0.0&web_rid=" +
-		room_id;
 	std::string response;
 	std::string ignored_final_url;
-	if (!fetch_text(api_url, response, ignored_final_url)) {
-		blog(LOG_WARNING, "[HEVC FLV] Could not obtain the Douyin live-room stream information");
+#if defined(__APPLE__)
+	const bool fetched_live_page = fetch_douyin_live_page(room_id, response);
+#else
+	const std::string live_page_url = "https://live.douyin.com/" + room_id;
+	const bool fetched_live_page = fetch_text(live_page_url, response, ignored_final_url);
+#endif
+	if (!fetched_live_page) {
+		blog(LOG_WARNING, "[HEVC FLV] Could not open the Douyin live-room page");
 		return {};
 	}
-	const size_t stream_urls = response.find("\"flv_pull_url\"");
-	if (stream_urls == std::string::npos) {
-		blog(LOG_WARNING, "[HEVC FLV] The Douyin room is offline or did not provide an FLV stream");
-		return {};
-	}
-	for (const char *quality : {"FULL_HD1", "HD1", "SD1", "SD2", "LD"}) {
-		const std::string url = find_json_string(response, quality, stream_urls);
-		if (is_http_url(url)) {
-			blog(LOG_INFO, "[HEVC FLV] Resolved Douyin room %s (%s)", room_id.c_str(), quality);
-			return url;
+	const std::string stream_url = find_douyin_flv_url(response, room_id);
+	if (!stream_url.empty())
+		return stream_url;
+#if defined(__APPLE__)
+	std::string chrome_page_state;
+	if (fetch_douyin_chrome_page_state(room_id, chrome_page_state)) {
+		const std::string chrome_stream_url = find_douyin_flv_url(chrome_page_state, room_id);
+		if (!chrome_stream_url.empty()) {
+			blog(LOG_INFO, "[HEVC FLV] Resolved Douyin room %s from the open Chrome live page", room_id.c_str());
+			return chrome_stream_url;
 		}
 	}
-	const std::string url = find_json_string(response, "flv_pull_url", stream_urls);
-	if (is_http_url(url)) {
-		blog(LOG_INFO, "[HEVC FLV] Resolved Douyin room %s", room_id.c_str());
-		return url;
-	}
-	blog(LOG_WARNING, "[HEVC FLV] The Douyin room did not provide a usable FLV URL");
+#endif
+	if (stream_url.empty())
+		blog(LOG_WARNING, "[HEVC FLV] The Douyin room is offline or did not provide an FLV stream");
 	return {};
 }
 
@@ -509,15 +607,16 @@ private:
 		return true;
 	}
 
-	void initialize_video(const uint8_t *config, size_t config_size)
+	void initialize_video(AVCodecID codec_id, const char *codec_name, size_t minimum_config_size, const uint8_t *config,
+			      size_t config_size)
 	{
-		if (config_size < 23 || config[0] != 1) {
-			blog(LOG_WARNING, "[HEVC FLV] Invalid HEVC configuration record");
+		if (config_size < minimum_config_size || config[0] != 1) {
+			blog(LOG_WARNING, "[HEVC FLV] Invalid %s configuration record", codec_name);
 			return;
 		}
 		free_video_decoder();
-		if (open_decoder(video_decoder_, AV_CODEC_ID_HEVC, config, config_size))
-			blog(LOG_INFO, "[HEVC FLV] HEVC video decoder initialized");
+		if (open_decoder(video_decoder_, codec_id, config, config_size))
+			blog(LOG_INFO, "[HEVC FLV] %s video decoder initialized", codec_name);
 	}
 
 	void free_video_decoder()
@@ -656,11 +755,16 @@ private:
 	void handle_tag(uint8_t type, const uint8_t *data, size_t size, uint32_t timestamp)
 	{
 		if (type == kFlvTagVideo) {
-			if (size < 5 || (data[0] & 0x0FU) != kFlvVideoHevc)
+			if (size < 5)
+				return;
+			const uint8_t codec = data[0] & 0x0FU;
+			if (codec != kFlvVideoHevc && codec != kFlvVideoAvc)
 				return;
 			const uint8_t packet_type = data[1];
 			if (packet_type == 0)
-				initialize_video(data + 5, size - 5);
+				initialize_video(codec == kFlvVideoHevc ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264,
+						 codec == kFlvVideoHevc ? "HEVC" : "H.264",
+						 codec == kFlvVideoHevc ? 23 : 7, data + 5, size - 5);
 			else if (packet_type == 1)
 				decode_video(data + 5, size - 5, timestamp, int64_t(timestamp) + read_signed_be24(data + 2));
 			return;
